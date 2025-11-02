@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en" class="">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mind Map Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+    <style>
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        :root {
+            --bg-primary: #f8fafc; /* slate-50 */
+            --bg-secondary: #ffffff;
+            --text-primary: #1e2b3b; /* slate-800 */
+            --text-secondary: #475569; /* slate-600 */
+            --border-color: #e2e8f0; /* slate-200 */
+            --node-stroke: #f8fafc;
+            --link-stroke: #cbd5e1; /* slate-300 */
+            --selected-stroke: #db2777; /* pink-600 */
+            --node-internal-fill: #a5b4fc; /* lighter indigo (indigo-300) */
+            --node-internal-stroke: #818cf8; /* indigo-400 */
+            --node-leaf-fill: #e5e7eb; /* lighter gray (gray-200) */
+            --node-leaf-stroke: #d1d5db; /* gray-300 */
+        }
+
+        html.dark {
+            --bg-primary: #0f172a; /* slate-900 */
+            --bg-secondary: #1e2b3b; /* slate-800 */
+            --text-primary: #f1f5f9; /* slate-100 */
+            --text-secondary: #94a3b8; /* slate-400 */
+            --border-color: #334155; /* slate-700 */
+            --node-stroke: #1e2b3b;
+            --link-stroke: #475569; /* slate-600 */
+            --selected-stroke: #f472b6; /* pink-400 */
+            --node-internal-fill: #312e81; /* dark indigo (indigo-900) */
+            --node-internal-stroke: #4338ca; /* indigo-700 */
+            --node-leaf-fill: #374151; /* dark gray (gray-700) */
+            --node-leaf-stroke: #4b5563; /* gray-600 */
+        }
+
+        html.amoled {
+            --bg-primary: #000000;
+            --bg-secondary: #111111;
+            --text-primary: #e5e5e5; /* slightly off-white for comfort */
+            --text-secondary: #a3a3a3;
+            --border-color: #262626;
+            --node-stroke: #111111;
+            --link-stroke: #404040;
+            --selected-stroke: #f472b6; /* pink-400 */
+            --node-internal-fill: #312e81; /* dark indigo (indigo-900) */
+            --node-internal-stroke: #4338ca; /* indigo-700 */
+            --node-leaf-fill: #262626; /* neutral-800 */
+            --node-leaf-stroke: #404040; /* neutral-700 */
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        #main-content {
+            touch-action: none; /* Prevents browser gestures interfering with panning/zooming */
+        }
+
+        /* --- D3 Styling --- */
+        .node rect {
+            cursor: pointer;
+            stroke-width: 1.5px;
+            /* REMOVED: width and height transitions that conflicted with D3 */
+            transition: transform 0.2s ease-out, stroke 0.2s ease-out, fill 0.3s;
+        }
+        
+        /* Ensure focused nodes have an outline for accessibility */
+        .node:focus {
+            outline: none; /* Disable default browser outline */
+        }
+        .node:focus rect {
+             stroke: var(--selected-stroke); /* Use selection color for focus */
+             stroke-width: 3px;
+             stroke-dasharray: 6 3;
+        }
+
+        .node text {
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            fill: var(--text-primary);
+            transition: fill 0.3s;
+            pointer-events: none; /* Text doesn't block click on rect */
+        }
+
+        .node--internal {
+            fill: var(--node-internal-fill);
+            stroke: var(--node-internal-stroke);
+        }
+
+        .node--leaf {
+            fill: var(--node-leaf-fill);
+            stroke: var(--node-leaf-stroke);
+        }
+
+        .link {
+            fill: none;
+            stroke: var(--link-stroke);
+            stroke-width: 2px;
+            /* REMOVED: 'd' attribute transition that conflicted with D3 */
+            transition: stroke 0.3s;
+        }
+
+        .node rect.selected {
+            stroke: var(--selected-stroke);
+            stroke-width: 3px;
+            transform: scale(1.05);
+            stroke-dasharray: none; /* Ensure selected is a solid line */
+        }
+        
+        /* Search Highlight Styling */
+        .node.highlighted rect {
+            stroke: #f59e0b; /* amber-500 */
+            stroke-width: 4px;
+        }
+        html.dark .node.highlighted rect, html.amoled .node.highlighted rect {
+            stroke: #fcd34d; /* amber-300 */
+        }
+        .node.dimmed {
+            opacity: 0.2;
+            transition: opacity 0.3s ease-in-out;
+        }
+        .node:not(.dimmed) {
+            opacity: 1;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .material-symbols-outlined { vertical-align: bottom; }
+
+        /* Drag and Drop Overlay */
+        #drop-zone.dragover {
+            display: flex;
+        }
+
+        .vertical-slider {
+            writing-mode: bt-lr; /* bottom to top, left to right */
+            -webkit-appearance: slider-vertical;
+        }
+    </style>
+</head>
+<body class="antialiased">
+    <div class="flex flex-col h-full overflow-hidden relative">
+        <!-- Header and Controls -->
+        <header class="bg-white/80 dark:bg-slate-800/80 dark:amoled:bg-black/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700 dark:amoled:border-neutral-800 p-3 z-10 shrink-0">
+            <div class="container mx-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                <h1 class="text-xl font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-indigo-600 dark:text-indigo-400">device_hub</span>
+                    Mind Map Viewer
+                </h1>
+                
+                <!-- Center Controls -->
+                <div class="flex items-center gap-2 sm:gap-4 bg-slate-100 dark:bg-slate-900 dark:amoled:bg-neutral-900 p-1 rounded-full">
+                    <div id="layout-toggle" class="flex items-center rounded-full">
+                        <button data-layout="horizontal" class="layout-btn px-3 py-1.5 text-sm font-semibold rounded-full flex items-center gap-1.5 transition-colors">
+                             <span class="material-symbols-outlined text-base">align_horizontal_left</span> <span class="hidden sm:inline">Mind Map</span>
+                        </button>
+                         <button data-layout="vertical" class="layout-btn px-3 py-1.5 text-sm font-semibold rounded-full flex items-center gap-1.5 transition-colors">
+                             <span class="material-symbols-outlined text-base">account_tree</span> <span class="hidden sm:inline">Org Chart</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right Controls -->
+                <div class="flex items-center space-x-2 sm:space-x-3">
+                    <!-- Search Input -->
+                    <div class="relative">
+                        <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+                        <input type="text" id="searchInput" placeholder="Search..." class="w-32 sm:w-56 rounded-full border border-slate-300 dark:border-slate-600 dark:amoled:border-neutral-700 bg-white dark:bg-slate-700 dark:amoled:bg-neutral-800 py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all duration-300 focus:w-40 sm:focus:w-64">
+                    </div>
+
+                     <div class="flex items-center space-x-1 bg-slate-100 dark:bg-slate-900 dark:amoled:bg-neutral-900 p-1 rounded-full">
+                        <input type="color" id="colorPicker" class="w-8 h-8 p-1 bg-white dark:bg-slate-700 dark:amoled:bg-neutral-800 border-2 border-transparent rounded-full cursor-pointer disabled:opacity-50" value="#4f46e5" title="Set color for all nodes">
+                        <button id="resetColorBtn" class="p-1.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50" title="Reset to default colors" aria-label="Reset to default colors">
+                             <span class="material-symbols-outlined text-slate-600 dark:text-slate-300">palette</span>
+                        </button>
+                    </div>
+                    <button id="expandCollapseBtn" class="px-2 sm:px-4 py-2 bg-indigo-600 text-white font-semibold rounded-full shadow-sm hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 transition-all duration-200 ease-in-out disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed flex items-center gap-2" title="Expand/Collapse All (E)">
+                        <span id="expandCollapseIcon" class="material-symbols-outlined">unfold_more</span> <span id="expandCollapseText" class="hidden sm:inline">Expand</span>
+                    </button>
+                    <div class="relative">
+                        <button id="exportBtn" class="p-2.5 bg-slate-500 text-white font-semibold rounded-full shadow-sm hover:bg-slate-600 dark:bg-slate-600 dark:hover:bg-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-opacity-75 transition disabled:bg-slate-400 disabled:cursor-not-allowed" title="Export" aria-label="Export">
+                            <span class="material-symbols-outlined">download</span>
+                        </button>
+                        <div id="exportMenu" class="hidden absolute right-0 mt-2 w-40 bg-white dark:bg-slate-700 rounded-lg shadow-xl ring-1 ring-black ring-opacity-5 py-1 z-20">
+                            <a href="#" id="export-svg" class="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600">Export as SVG</a>
+                            <a href="#" id="export-png" class="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600">Export as PNG</a>
+                            <a href="#" id="export-json" class="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600">Export as JSON</a>
+                            <a href="#" id="export-mm" class="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-600">Export as .MM</a>
+                        </div>
+                    </div>
+                     <label for="fileInput" class="cursor-pointer p-2.5 bg-green-500 text-white font-semibold rounded-full shadow-sm hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-opacity-75 transition" title="Load .mm file" aria-label="Load .mm file">
+                        <span class="material-symbols-outlined">file_upload</span>
+                        <input type="file" id="fileInput" class="hidden" accept=".mm">
+                    </label>
+                    <button id="fullscreenBtn" class="p-2.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full hover:bg-slate-300 dark:hover:bg-slate-600" title="Toggle Fullscreen (F)" aria-label="Toggle Fullscreen">
+                        <span class="material-symbols-outlined">fullscreen</span>
+                    </button>
+                    <button id="theme-toggle" class="p-2.5 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full hover:bg-slate-300 dark:hover:bg-slate-600" title="Toggle Theme" aria-label="Toggle Theme">
+                        <span class="material-symbols-outlined">light_mode</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="flex-grow relative">
+            <div id="mindmap-container" class="w-full h-full"></div>
+            
+            <!-- Loading Overlay -->
+            <div id="loading-overlay" class="hidden absolute inset-0 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-40">
+                 <svg class="animate-spin h-12 w-12 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+            
+            <div id="placeholder" class="absolute inset-0 flex items-center justify-center flex-col text-center p-4 select-none pointer-events-none">
+                 <span class="material-symbols-outlined text-slate-300 dark:text-slate-600" style="font-size: 96px;">device_hub</span>
+                <h2 class="mt-4 text-2xl font-semibold text-slate-600 dark:text-slate-400">Welcome to the Mind Map viewer</h2>
+                <p class="mt-2 text-slate-400 dark:text-slate-500">Drop a <code class="bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800 text-slate-600 dark:text-slate-300 px-2 py-1 rounded">.mm</code> file here, or click the upload icon to begin.</p>
+                <div class="mt-6 text-xs text-slate-400 dark:text-slate-500 border-t border-slate-200 dark:border-slate-700 dark:amoled:border-neutral-800 pt-4 max-w-md">
+                    <b>Keyboard Shortcuts:</b> &nbsp; 
+                    <kbd class="p-1 rounded bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800">↑</kbd> <kbd class="p-1 rounded bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800">↓</kbd> <kbd class="p-1 rounded bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800">←</kbd> <kbd class="p-1 rounded bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800">→</kbd> to navigate,
+                    <kbd class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800">Enter</kbd> to toggle node,
+                    <kbd class="px-2 py-1 rounded bg-slate-200 dark:bg-slate-700 dark:amoled:bg-neutral-800">Esc</kbd> to deselect.
+                </div>
+            </div>
+            <div id="drop-zone" class="absolute inset-0 bg-indigo-500/20 dark:bg-indigo-400/20 border-4 border-dashed border-indigo-400 dark:border-indigo-500 rounded-2xl hidden items-center justify-center transition-all">
+                <p class="text-2xl font-bold text-indigo-600 dark:text-indigo-300">Drop your .mm file here</p>
+            </div>
+        </main>
+
+        <!-- Zoom Controls -->
+        <div id="zoom-controls" class="absolute bottom-16 right-4 bg-white/80 dark:bg-slate-800/80 dark:amoled:bg-black/80 backdrop-blur-sm border border-slate-200 dark:border-slate-700 dark:amoled:border-neutral-800 rounded-full shadow-lg items-center p-2 space-y-2 flex flex-col">
+            <button id="zoomInBtn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" title="Zoom in (+)" aria-label="Zoom in">
+                <span class="material-symbols-outlined">add</span>
+            </button>
+            <input type="range" id="zoomSlider" min="10" max="200" value="100" class="w-1 h-24 accent-indigo-600 dark:accent-indigo-400 bg-transparent cursor-pointer vertical-slider">
+            <button id="zoomOutBtn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" title="Zoom out (-)" aria-label="Zoom out">
+                <span class="material-symbols-outlined">remove</span>
+            </button>
+            <span id="zoomPercentage" class="text-xs font-mono pt-1 text-center text-slate-600 dark:text-slate-300">100%</span>
+                <hr class="w-4/5 border-t border-slate-200 dark:border-slate-700 dark:amoled:border-neutral-800 my-1">
+            <button id="fitViewBtn" class="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" title="Fit to screen (A)" aria-label="Fit to screen">
+                <span class="material-symbols-outlined">fit_screen</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Tooltip element -->
+    <div id="tooltip" class="absolute hidden z-30 bg-slate-800 dark:bg-slate-900 dark:amoled:bg-neutral-900 text-white text-sm rounded-md px-3 py-1.5 shadow-lg pointer-events-none transition-opacity duration-200" style="opacity: 0;"></div>
+
+    <!-- Message Toast -->
+    <div id="message-toast" class="hidden fixed bottom-4 right-4 w-auto max-w-sm p-4 rounded-lg shadow-lg z-50 transition-all duration-300 opacity-0 transform translate-y-2">
+        <div class="flex items-center justify-between">
+            <span id="message-toast-text" class="font-medium">Error message</span>
+            <button id="message-toast-close" class="ml-4 -mr-1 -my-1 p-1 rounded-full">
+                <span class="material-symbols-outlined text-lg text-white">close</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Element Refs
+            const fileInput = document.getElementById('fileInput');
+            const expandCollapseBtn = document.getElementById('expandCollapseBtn');
+            const colorPicker = document.getElementById('colorPicker');
+            const placeholder = document.getElementById('placeholder');
+            const container = document.getElementById('mindmap-container');
+            const mainContent = document.getElementById('main-content');
+            const dropZone = document.getElementById('drop-zone');
+            const themeToggle = document.getElementById('theme-toggle');
+            const fullscreenBtn = document.getElementById('fullscreenBtn');
+            const exportBtn = document.getElementById('exportBtn');
+            const exportMenu = document.getElementById('exportMenu');
+            const layoutToggleContainer = document.getElementById('layout-toggle');
+            const searchInput = document.getElementById('searchInput');
+            const tooltip = document.getElementById('tooltip');
+            const zoomControls = document.getElementById('zoom-controls');
+            const zoomInBtn = document.getElementById('zoomInBtn');
+            const zoomOutBtn = document.getElementById('zoomOutBtn');
+            const zoomSlider = document.getElementById('zoomSlider');
+            const zoomPercentage = document.getElementById('zoomPercentage');
+            const fitViewBtn = document.getElementById('fitViewBtn');
+            const resetColorBtn = document.getElementById('resetColorBtn');
+            const loadingOverlay = document.getElementById('loading-overlay');
+            const messageToast = document.getElementById('message-toast');
+            const messageToastText = document.getElementById('message-toast-text');
+            const messageToastClose = document.getElementById('message-toast-close');
+
+            // State
+            let svg, g, root, selectedNode = null, mindMapData = null;
+            let i = 0;
+            const duration = 500;
+            let tree;
+            let isAllExpanded = true;
+            let currentLayout = 'horizontal';
+            let zoomBehavior; // Define zoom behavior here
+            let normalScreenTransform = null; // To store zoom/pan state
+            let searchTimeout;
+            let messageToastTimeout;
+            let isFullscreenTransitioning = false; // <-- ADD THIS FLAG
+
+            // --- Initial Setup ---
+            
+            function initializeApp() {
+                setInitialTheme();
+                updateLayoutToggleUI();
+                setupEventListeners();
+                disableControls(true);
+                loadStateFromLocalStorage();
+            }
+
+            // --- Theme Management ---
+
+            function setInitialTheme() {
+                const theme = localStorage.theme || 'light';
+                const themeIcon = themeToggle.querySelector('.material-symbols-outlined');
+                const themeTooltip = themeToggle;
+
+                document.documentElement.classList.remove('dark', 'amoled');
+
+                if (theme === 'dark') {
+                    document.documentElement.classList.add('dark');
+                    themeIcon.textContent = 'dark_mode';
+                    themeTooltip.title = 'Switch to AMOLED Mode';
+                } else if (theme === 'amoled') {
+                    document.documentElement.classList.add('dark', 'amoled');
+                    themeIcon.textContent = 'nightlight';
+                     themeTooltip.title = 'Switch to Light Mode';
+                } else {
+                    themeIcon.textContent = 'light_mode';
+                     themeTooltip.title = 'Switch to Dark Mode';
+                }
+            }
+
+            function toggleTheme() {
+                const docClasses = document.documentElement.classList;
+                if (docClasses.contains('amoled')) { // From AMOLED to Light
+                    docClasses.remove('dark', 'amoled');
+                    localStorage.theme = 'light';
+                } else if (docClasses.contains('dark')) { // From Dark to AMOLED
+                    docClasses.add('amoled');
+                    localStorage.theme = 'amoled';
+                } else { // From Light to Dark
+                    docClasses.add('dark');
+                    localStorage.theme = 'dark';
+                }
+                setInitialTheme(); // Update icon and tooltip
+            }
+            
+            // --- Loading & Messaging ---
+
+            function showLoading(isLoading) {
+                if (isLoading) {
+                    loadingOverlay.classList.remove('hidden');
+                } else {
+                    loadingOverlay.classList.add('hidden');
+                }
+            }
+
+            function showMessage(text, isError = true) {
+                clearTimeout(messageToastTimeout);
+                messageToastText.textContent = text;
+                
+                // Remove old classes
+                messageToast.classList.remove('bg-red-600', 'bg-green-600');
+                messageToastClose.classList.remove('hover:bg-red-700', 'hover:bg-green-700');
+
+                // Add new classes based on type
+                if (isError) {
+                    messageToast.classList.add('bg-red-600');
+                    messageToastClose.classList.add('hover:bg-red-700');
+                } else {
+                    messageToast.classList.add('bg-green-600');
+                    messageToastClose.classList.add('hover:bg-green-700');
+                }
+
+                messageToast.classList.remove('hidden');
+                // Force reflow
+                void messageToast.offsetWidth;
+                messageToast.classList.remove('opacity-0', 'translate-y-2');
+                
+                messageToastTimeout = setTimeout(() => {
+                    hideMessage();
+                }, 5000); // Auto-hide after 5 seconds
+            }
+
+            function hideMessage() {
+                clearTimeout(messageToastTimeout);
+                messageToast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => {
+                     messageToast.classList.add('hidden');
+                }, 300);
+            }
+
+            // --- D3 Visualization ---
+
+            function setupVisualization() {
+                container.innerHTML = '';
+                const width = container.clientWidth;
+                const height = container.clientHeight;
+
+                svg = d3.select("#mindmap-container").append("svg")
+                    .attr("width", width)
+                    .attr("height", height)
+                    .attr("viewBox", [-width / 2, -height / 2, width, height])
+                    .call(zoomBehavior = d3.zoom()
+                        .scaleExtent([0.1, 2]) // Set min/max zoom
+                        .on("zoom", (event) => {
+                            g.attr("transform", event.transform);
+                             // Update zoom UI - This correctly syncs wheel/button zoom
+                            const currentScale = event.transform.k;
+                            const percentage = Math.round(currentScale * 100);
+                            if (zoomSlider) zoomSlider.value = percentage;
+                            if (zoomPercentage) zoomPercentage.textContent = `${percentage}%`;
+                    }));
+
+                g = svg.append("g");
+            }
+
+            // --- File & State Handling ---
+
+            function handleFile(file) {
+                 if (!file || !file.name.endsWith('.mm')) {
+                    showMessage('Please select a valid .mm file.');
+                    return;
+                }
+                const reader = new FileReader();
+                showLoading(true);
+                
+                reader.onload = function(e) {
+                    try {
+                        const contents = e.target.result;
+                        mindMapData = parseMindMap(contents);
+                        
+                        if (!mindMapData || !mindMapData.name) {
+                            throw new Error("Invalid mind map format: missing root node");
+                        }
+                        
+                        placeholder.style.display = 'none';
+                        if (!svg) setupVisualization();
+                        render(mindMapData);
+                        disableControls(false);
+                        saveStateToLocalStorage();
+                        showMessage("Mind map loaded successfully!", false);
+                    } catch (error) {
+                        console.error("Error processing file:", error);
+                        showMessage("Failed to process the mind map file: " + error.message);
+                    } finally {
+                        showLoading(false);
+                    }
+                };
+
+                reader.onerror = function() {
+                    console.error("Error reading file");
+                    showMessage("Error reading the file. Please try again.");
+                    showLoading(false);
+                };
+
+                try {
+                    reader.readAsText(file);
+                } catch (error) {
+                    console.error("Error initiating file read:", error);
+                    showMessage("Error reading the file. Please try again.");
+                    showLoading(false);
+                }
+            }
+
+            function parseMindMap(xmlString) {
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+                if (xmlDoc.getElementsByTagName("parsererror").length) throw new Error("XML parsing error.");
+                const rootNode = xmlDoc.querySelector("map > node");
+                return rootNode ? convertNodeToJson(rootNode) : {};
+            }
+
+            function convertNodeToJson(node) {
+                const obj = {
+                    name: node.getAttribute("TEXT") || "Untitled",
+                    children: [],
+                    color: node.getAttribute("BACKGROUND_COLOR")
+                };
+                const children = Array.from(node.children).filter(child => child.tagName === 'node');
+                children.forEach(child => obj.children.push(convertNodeToJson(child)));
+                return obj;
+            }
+            
+            function saveStateToLocalStorage() {
+                if (!root) return;
+                const state = {
+                    data: mindMapData,
+                    nodes: {}
+                };
+                root.each(d => {
+                    state.nodes[d.data.name + d.depth] = {
+                        isCollapsed: !!d._children,
+                        color: d.data.color
+                    };
+                });
+                localStorage.setItem('mindMapState', JSON.stringify(state));
+            }
+
+            function loadStateFromLocalStorage() {
+                const savedState = localStorage.getItem('mindMapState');
+                if (savedState) {
+                    try {
+                        const state = JSON.parse(savedState);
+                        mindMapData = state.data;
+                        placeholder.style.display = 'none';
+                        if (!svg) setupVisualization();
+                        render(mindMapData, state.nodes);
+                        disableControls(false);
+                    } catch (e) {
+                        console.error("Failed to load saved state:", e);
+                        // Graceful degradation: remove bad state and load fresh.
+                        localStorage.removeItem('mindMapState');
+                    }
+                }
+            }
+
+            // --- Rendering Logic ---
+
+            function render(data, nodeStates = null) {
+                root = d3.hierarchy(data, d => d.children);
+                root.x0 = container.clientHeight / 2;
+                root.y0 = 0;
+                
+                if (nodeStates) {
+                     root.each(d => {
+                        const nodeState = nodeStates[d.data.name + d.depth];
+                        if (nodeState) {
+                            d.data.color = nodeState.color;
+                            if (nodeState.isCollapsed && d.children) {
+                                d._children = d.children;
+                                d.children = null;
+                            }
+                        }
+                    });
+                } else {
+                    if(root.children) root.children.forEach(collapse);
+                }
+                
+                update(root);
+                fitView();
+            }
+            
+            function wrap(text, width) {
+                text.each(function() {
+                    var text = d3.select(this),
+                        words = text.text().split(/\s+/).reverse(),
+                        word,
+                        line = [],
+                        lineNumber = 0,
+                        lineHeight = 1.1, // ems
+                        tspan = text.text(null).append("tspan").attr("x", 0);
+                    
+                    while (word = words.pop()) {
+                        line.push(word);
+                        tspan.text(line.join(" "));
+                        if (tspan.node().getComputedTextLength() > width && line.length > 1) {
+                            line.pop();
+                            tspan.text(line.join(" "));
+                            line = [word];
+                            tspan = text.append("tspan").attr("x", 0).attr("dy", lineHeight + "em").text(word);
+                            lineNumber++;
+                        }
+                    }
+                    // Vertically center the text block
+                    const yOffset = -(lineNumber * lineHeight / 2);
+                    text.attr('dy', yOffset + 'em');
+                });
+            }
+
+            function updateLayout() {
+                const nodeSize = currentLayout === 'horizontal' ? [100, 280] : [220, 180];
+                tree = d3.tree().nodeSize(nodeSize);
+                if (root) {
+                    const selectedNodeId = selectedNode ? selectedNode.id : null;
+                    update(root);
+                    
+                    if (selectedNodeId) {
+                        // Find node by its persistent ID
+                        selectedNode = null;
+                        root.each(d => {
+                            if (d.id === selectedNodeId) {
+                                selectedNode = d;
+                            }
+                        });
+                        updateSelectionUI();
+                    }
+                }
+            }
+
+            function update(source) {
+                if (!tree) updateLayout();
+                const treeData = tree(root);
+                const nodes = treeData.descendants();
+                const links = treeData.descendants().slice(1);
+
+                // Assign a persistent ID if one doesn't exist
+                const node = g.selectAll("g.node").data(nodes, d => d.id || (d.id = ++i));
+
+                // --- Node Enter ---
+                const nodeEnter = node.enter().append("g")
+                    .attr("class", "node")
+                    .attr("transform", d => currentLayout === 'horizontal' ? `translate(${source.y0},${source.x0})` : `translate(${source.x0},${source.y0})`)
+                    .attr("tabindex", -1) // Make focusable by script
+                    .attr("role", "treeitem")
+                    .on("click", (event, d) => handleNodeClick(event, d))
+                    .on('mouseover', (event, d) => {
+                        const childrenCount = (d.children?.length || 0) + (d._children?.length || 0);
+                        tooltip.innerHTML = `<b>${d.data.name}</b><hr class="my-1 border-slate-600"><div class="text-xs">Depth: ${d.depth}<br>Children: ${childrenCount}</div>`;
+                        tooltip.classList.remove('hidden');
+                        tooltip.style.opacity = 1;
+                    })
+                    .on('mousemove', (event) => {
+                        // FIX: Add tooltip boundary checking
+                        const tooltipWidth = tooltip.offsetWidth;
+                        const tooltipHeight = tooltip.offsetHeight;
+                        const padding = 15;
+                        
+                        let x = event.pageX + padding;
+                        let y = event.pageY + padding;
+
+                        // Boundary check for X
+                        if (x + tooltipWidth + padding > window.innerWidth) {
+                            x = event.pageX - tooltipWidth - padding;
+                        }
+                        // Boundary check for Y
+                        if (y + tooltipHeight + padding > window.innerHeight) {
+                            y = event.pageY - tooltipHeight - padding;
+                        }
+
+                        tooltip.style.left = `${x}px`;
+                        tooltip.style.top = `${y}px`;
+                    })
+                    .on('mouseout', () => {
+                        tooltip.style.opacity = 0;
+                        setTimeout(() => {
+                            if (tooltip.style.opacity === '0') {
+                                tooltip.classList.add('hidden');
+                            }
+                        }, 200);
+                    });
+                
+                nodeEnter.append("rect").attr('rx', 12).attr('ry', 12);
+                nodeEnter.append("text").style("fill-opacity", 1e-6);
+
+                // --- Merge Enter and Update selections ---
+                const nodeUpdate = nodeEnter.merge(node);
+
+                // --- Calculate final attributes for all nodes (without transition) ---
+                nodeUpdate.select('text')
+                    .text(d => d.data.name)
+                    .call(wrap, currentLayout === 'horizontal' ? 200 : 160);
+
+                nodeUpdate.each(function(d) {
+                    const textElem = d3.select(this).select('text').node();
+                    if (textElem) {
+                        const bbox = textElem.getBBox();
+                        d.rectWidth = bbox.width + 24;
+                        d.rectHeight = bbox.height + 16;
+                    }
+                });
+
+                // --- Collision detection for horizontal layout (mutates d.x) ---
+                if (currentLayout === 'horizontal') {
+                    const depthLevels = d3.group(nodes, d => d.depth);
+                    const padding = 15;
+                    depthLevels.forEach(nodesAtDepth => {
+                        if (nodesAtDepth.length < 2) return;
+                        nodesAtDepth.sort((a, b) => a.x - b.x);
+                        for (let i = 1; i < nodesAtDepth.length; i++) {
+                            const prevNode = nodesAtDepth[i - 1];
+                            const currNode = nodesAtDepth[i];
+                            const overlap = (prevNode.x + prevNode.rectHeight / 2 + padding) - (currNode.x - currNode.rectHeight / 2);
+                            if (overlap > 0) {
+                                for (let j = i; j < nodesAtDepth.length; j++) {
+                                    nodesAtDepth[j].x += overlap;
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // --- Apply coordinated transitions NOW ---
+                
+                // Transition nodes to their new position
+                nodeUpdate.transition().duration(duration)
+                    .attr("transform", d => currentLayout === 'horizontal' ? `translate(${d.y},${d.x})` : `translate(${d.x},${d.y})`)
+                    .attr("aria-expanded", d => d._children ? "false" : (d.children ? "true" : "false")) // A11y
+                    .attr("aria-label", d => d.data.name); // A11y
+
+                // Transition rects to their new size and style
+                nodeUpdate.select('rect')
+                    // FIX: Use persistent ID for selection check
+                    .attr("class", d => (d._children ? "node--internal" : "node--leaf") + (selectedNode && d.id === selectedNode.id ? " selected" : ""))
+                    .style("fill", d => d.data.color || null)
+                    .transition().duration(duration)
+                    .attr('x', d => -d.rectWidth / 2)
+                    .attr('y', d => -d.rectHeight / 2)
+                    .attr('width', d => d.rectWidth)
+                    .attr('height', d => d.rectHeight);
+
+                // Transition text to be visible
+                nodeUpdate.select('text')
+                    .attr('x', 0)
+                    .attr('text-anchor', 'middle')
+                    .transition().duration(duration)
+                    .style('fill-opacity', 1);
+
+                // --- Node Exit ---
+                const nodeExit = node.exit().transition().duration(duration)
+                    .attr("transform", d => currentLayout === 'horizontal' ? `translate(${source.y},${source.x})` : `translate(${source.x},${source.y})`).remove();
+                
+                nodeExit.select("rect").attr('width', 0).attr('height', 0);
+                nodeExit.select("text").style("fill-opacity", 1e-6);
+
+                // --- Link Enter, Update, Exit ---
+                const link = g.selectAll("path.link").data(links, d => d.id);
+
+                const linkEnter = link.enter().insert("path", "g")
+                    .attr("class", "link")
+                    .attr("d", d => {
+                        const o = {x: source.x0, y: source.y0, rectWidth: 0, rectHeight: 0};
+                        return diagonal(o, o);
+                    });
+                
+                const linkUpdate = linkEnter.merge(link);
+                linkUpdate.transition().duration(duration).attr("d", d => diagonal(d.parent, d));
+                
+                link.exit().transition().duration(duration).attr("d", d => {
+                    const o = {x: source.x, y: source.y, rectWidth: 0, rectHeight: 0};
+                    return diagonal(o, o);
+                }).remove();
+                
+                nodes.forEach(d => {
+                    d.x0 = d.x;
+                    d.y0 = d.y;
+                });
+                
+                saveStateToLocalStorage();
+            }
+
+            function diagonal(source, target) {
+                const sourceWidth = source.rectWidth || 0;
+                const targetWidth = target.rectWidth || 0;
+                const sourceHeight = source.rectHeight || 0;
+                const targetHeight = target.rectHeight || 0;
+                const offset = 80;
+
+                if (currentLayout === 'horizontal') {
+                    const sourceX = source.y + sourceWidth / 2;
+                    const sourceY = source.x;
+                    const targetX = target.y - targetWidth / 2;
+                    const targetY = target.x;
+
+                    return `M ${sourceX},${sourceY} C ${sourceX + offset},${sourceY} ${targetX - offset},${targetY} ${targetX},${targetY}`;
+                
+                } else { // Vertical
+                    const sourceX = source.x;
+                    const sourceY = source.y + sourceHeight / 2;
+                    const targetX = target.x;
+                    const targetY = target.y - targetHeight / 2;
+                    
+                    return `M ${sourceX},${sourceY} C ${sourceX},${sourceY + offset} ${targetX},${targetY - offset} ${targetX},${targetY}`;
+                }
+            }
+
+            // --- Interactivity & Controls ---
+
+            function traverseAll(d, callback) {
+                callback(d);
+                const children = d.children || d._children;
+                if (children) {
+                    children.forEach(child => traverseAll(child, callback));
+                }
+            }
+
+            function updateExpandCollapseButtonState() {
+                if (!root) return;
+                const isTreeFullyExpanded = !root.descendants().some(d => d._children);
+                if (isAllExpanded !== isTreeFullyExpanded) {
+                    isAllExpanded = isTreeFullyExpanded;
+                    const icon = document.getElementById('expandCollapseIcon');
+                    const text = document.getElementById('expandCollapseText');
+                    if (isAllExpanded) {
+                        icon.textContent = 'unfold_less';
+                        text.textContent = 'Collapse';
+                    } else {
+                        icon.textContent = 'unfold_more';
+                        text.textContent = 'Expand';
+                    }
+                }
+            }
+
+            function handleNodeClick(event, d) {
+                if (event.ctrlKey || event.metaKey) {
+                    selectedNode = (selectedNode === d) ? null : d;
+                    updateSelectionUI();
+                    return;
+                }
+
+                if (d.children) {
+                    d._children = d.children;
+                    d.children = null;
+                } else {
+                    d.children = d._children;
+                    d._children = null;
+                    if (d.children) {
+                        d.children.forEach(collapse);
+                    }
+                }
+                update(d);
+                updateExpandCollapseButtonState();
+            }
+
+            function updateSelectionUI() {
+                // FIX: Use persistent ID for selection check
+                g.selectAll("g.node rect").attr("class", d => 
+                    (d._children ? "node--internal" : "node--leaf") + 
+                    (selectedNode && d.id === selectedNode.id ? " selected" : "")
+                );
+            }
+
+            function collapse(d) {
+                if (d.children) {
+                    d._children = d.children;
+                    d.children = null;
+                    if (d._children) {
+                        d._children.forEach(collapse);
+                    }
+                }
+            }
+            
+            function expand(d) {
+                if (d._children) {
+                    d.children = d._children;
+                    d._children = null;
+                }
+                if (d.children) {
+                    d.children.forEach(expand);
+                }
+            }
+            
+            function centerNode(node) {
+                 if (!g || !svg || !zoomBehavior) return;
+                
+                const scale = 1.0; // Reset scale to 1 when centering
+                const x = currentLayout === 'horizontal' ? -(node.y || node.y0) : -(node.x || node.x0);
+                const y = currentLayout === 'horizontal' ? -(node.x || node.x0) : -(node.y || node.y0);
+                
+                const transform = d3.zoomIdentity.translate(x * scale, y * scale).scale(scale);
+
+                svg.transition().duration(duration).call(zoomBehavior.transform, transform);
+            }
+
+            function disableControls(state) {
+                expandCollapseBtn.disabled = state;
+                colorPicker.disabled = state;
+                resetColorBtn.disabled = state;
+                exportBtn.disabled = state;
+                searchInput.disabled = state;
+                // Decouple zoom controls from being hidden. Only disable them.
+                if (zoomControls) {
+                    zoomControls.style.pointerEvents = state ? 'none' : 'auto';
+                    zoomControls.style.opacity = state ? '0.5' : '1';
+                }
+            }
+
+            function fitView() {
+                if (!root || !g.node() || !svg || !zoomBehavior) return;
+
+                const nodesToFit = [root];
+                if (root.children) {
+                    nodesToFit.push(...root.children);
+                } else if (root._children) {
+                    nodesToFit.push(...root._children);
+                }
+
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+                nodesToFit.forEach(d => {
+                    const nodeX = currentLayout === 'horizontal' ? (d.y0 || d.y) : (d.x0 || d.x);
+                    const nodeY = currentLayout === 'horizontal' ? (d.x0 || d.x) : (d.y0 || d.y);
+                    const nodeWidth = d.rectWidth || 80;
+                    const nodeHeight = d.rectHeight || 40;
+                    
+                    minX = Math.min(minX, nodeX - nodeWidth / 2);
+                    maxX = Math.max(maxX, nodeX + nodeWidth / 2);
+                    minY = Math.min(minY, nodeY - nodeHeight / 2);
+                    maxY = Math.max(maxY, nodeY + nodeHeight / 2);
+                });
+
+                const boundsWidth = maxX - minX;
+                const boundsHeight = maxY - minY;
+                const fullWidth = container.clientWidth;
+                const fullHeight = container.clientHeight;
+
+                if (boundsWidth <= 0 || boundsHeight <= 0) {
+                    centerNode(root);
+                    return;
+                }
+
+                const scaleX = fullWidth / boundsWidth;
+                const scaleY = fullHeight / boundsHeight;
+                const scale = Math.min(scaleX, scaleY, 2) * 0.9;
+
+                const midX = (minX + maxX) / 2;
+                const midY = (minY + maxY) / 2;
+
+                const dx = -midX * scale;
+                const dy = -midY * scale;
+
+                const transform = d3.zoomIdentity.translate(dx, dy).scale(scale);
+
+                svg.transition().duration(750)
+                    .call(zoomBehavior.transform, transform);
+            }
+            
+            function updateLayoutToggleUI() {
+                document.querySelectorAll('.layout-btn').forEach(btn => {
+                    if (btn.dataset.layout === currentLayout) {
+                        btn.classList.add('bg-indigo-600', 'dark:bg-indigo-500', 'text-white');
+                        btn.classList.remove('text-slate-600', 'dark:text-slate-300', 'hover:bg-slate-200', 'dark:hover:bg-slate-700');
+                    } else {
+                        btn.classList.remove('bg-indigo-600', 'dark:bg-indigo-500', 'text-white');
+                        btn.classList.add('text-slate-600', 'dark:text-slate-300', 'hover:bg-slate-200', 'dark:hover:bg-slate-700');
+                    }
+                });
+            }
+
+            // --- Exporting ---
+            
+            function getSvgString() {
+                const svgNode = svg.node().cloneNode(true);
+                d3.select(svgNode).attr('version', '1.1').attr('xmlns', 'http://www.w3.org/2000/svg');
+                d3.select(svgNode).selectAll("*").on("*", null);
+
+                svgNode.querySelectorAll('g.node text').forEach(t => {
+                    const computedStyle = getComputedStyle(t);
+                    t.style.fill = computedStyle.fill;
+                    t.style.fontSize = computedStyle.fontSize;
+                    t.style.fontWeight = computedStyle.fontWeight;
+                    t.style.fontFamily = computedStyle.fontFamily;
+                });
+                
+                svgNode.querySelectorAll('.node rect').forEach(c => {
+                    const computedStyle = getComputedStyle(c);
+                    c.style.fill = computedStyle.fill;
+                    c.style.stroke = computedStyle.stroke;
+                    c.style.strokeWidth = computedStyle.strokeWidth;
+                });
+                
+                svgNode.querySelectorAll('.link').forEach(l => {
+                    const computedStyle = getComputedStyle(l);
+                    l.style.stroke = computedStyle.stroke;
+                    l.style.strokeWidth = computedStyle.strokeWidth;
+                    l.style.fill = computedStyle.fill;
+                });
+                
+                const svgString = new XMLSerializer().serializeToString(svgNode);
+                return svgString;
+            }
+
+            function downloadFile(content, fileName, contentType) {
+                try {
+                    const a = document.createElement("a");
+                    const file = new Blob([content], {type: contentType});
+                    a.href = URL.createObjectURL(file);
+a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    setTimeout(() => {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(a.href);
+                    }, 100);
+                } catch (error) {
+                    console.error("Error downloading file:", error);
+                    showMessage("Failed to download the file. Please try again.");
+                }
+            }
+            
+            // --- Event Listeners ---
+            
+            const eventHandlers = {
+                handleFileChange: function(e) { handleFile(e.target.files[0]); },
+                handleDragOver: function(e) { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('dragover'); },
+                handleDragLeave: function(e) { e.preventDefault(); e.stopPropagation(); if (e.target === dropZone) dropZone.classList.remove('dragover'); },
+                handleDrop: function(e) { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); },
+                toggleFullscreen: function() {
+                    if (!document.fullscreenElement) {
+                        // --- ENTERING ---
+                        if (svg) {
+                            normalScreenTransform = d3.zoomTransform(svg.node());
+                        }
+                        document.documentElement.requestFullscreen().catch(err => {
+                             showMessage(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+                        });
+                    } else {
+                        // --- EXITING ---
+                        if (document.exitFullscreen) {
+                           // *** THE FIX IS HERE ***
+                           // Set the flag *before* triggering the event.
+                           // This prevents the 'resize' handler from firing fitView()
+                           // before the 'fullscreenchange' handler can run.
+                           isFullscreenTransitioning = true;
+                           
+                           document.exitFullscreen();
+                        }
+                    }
+                },
+                // FIX: (Bug 1 & 2) Named handler for fullscreen change to fix memory leak and race condition
+                // FIX: Use double rAF for reliable layout/paint sync, and add loading feedback
+                handleFullscreenChange: function() {
+                    // The flag is ALREADY TRUE when exiting, set by toggleFullscreen.
+                    // We only need to set it here when ENTERING.
+
+                    if (!document.fullscreenElement) {
+                        // --- EXITING FULLSCREEN ---
+                        fullscreenBtn.querySelector('.material-symbols-outlined').textContent = 'fullscreen';
+                        showLoading(true); 
+                        
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                if (svg) {
+                                    // Manually update the SVG dimensions
+                                    const width = container.clientWidth;
+                                    const height = container.clientHeight;
+                                    svg.attr("width", width)
+                                       .attr("height", height)
+                                       .attr("viewBox", [-width / 2, -height / 2, width, height]);
+
+                                    // Restore the saved transform
+                                    if (normalScreenTransform) {
+                                        svg.call(zoomBehavior.transform, normalScreenTransform);
+                                        normalScreenTransform = null; 
+                                    } else {
+                                        fitView(); // Fallback
+                                    }
+                                }
+                                showLoading(false); 
+                                isFullscreenTransitioning = false; // Clear flag when done
+                            });
+                        });
+                    } else {
+                        // --- ENTERING FULLSCREEN ---
+                        isFullscreenTransitioning = true; // <-- Set flag here for entering
+                        fullscreenBtn.querySelector('.material-symbols-outlined').textContent = 'fullscreen_exit';
+                        
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                if(svg) {
+                                    const width = container.clientWidth;
+                                    const height = container.clientHeight;
+                                    svg.attr("width", width)
+                                       .attr("height", height)
+                                       .attr("viewBox", [-width / 2, -height / 2, width, height]);
+                                    
+                                    fitView(); 
+                                }
+                                isFullscreenTransitioning = false; // Clear flag when done
+                            });
+                        });
+                    }
+                },
+                toggleExpandCollapse: function() {
+                    if (!root) return;
+                    const targetNode = selectedNode || root;
+                    const canExpandSubtree = targetNode.descendants().some(d => d._children);
+                    if (canExpandSubtree) {
+                        expand(targetNode);
+                    } else {
+                        if (targetNode.children) {
+                            targetNode.children.forEach(collapse);
+                        }
+                    }
+                    update(targetNode);
+                    updateExpandCollapseButtonState();
+                },
+                handleZoomIn: function() {
+                    if (!svg || !zoomBehavior) return;
+                    zoomBehavior.scaleBy(svg.transition().duration(250), 1.2);
+                },
+                handleZoomOut: function() {
+                    if (!svg || !zoomBehavior) return;
+                    zoomBehavior.scaleBy(svg.transition().duration(250), 1 / 1.2);
+                },
+                handleZoomSlider: function(e) {
+                    if (!svg || !zoomBehavior) return;
+                    const newScale = e.target.value / 100;
+                    zoomBehavior.scaleTo(svg.transition().duration(50), newScale);
+                },
+                handleFitView: function() {
+                    fitView();
+                },
+                handleSearch: function(e) {
+                    const searchTerm = e.target.value.toLowerCase().trim();
+                    const allNodes = g.selectAll('g.node');
+
+                    if (!root) return;
+
+                    if (searchTerm.length === 0) {
+                        allNodes.classed('highlighted', false).classed('dimmed', false);
+                        return;
+                    }
+
+                    allNodes
+                        .classed('highlighted', d => d.data.name.toLowerCase().includes(searchTerm))
+                        .classed('dimmed', d => !d.data.name.toLowerCase().includes(searchTerm));
+                },
+                // FIX: (Bug 5) Debounced search handler
+                handleSearchDebounced: function(e) {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        eventHandlers.handleSearch(e);
+                    }, 150);
+                },
+                handleLayoutToggle: function(e) {
+                    const btn = e.target.closest('.layout-btn');
+                    if(btn) {
+                        currentLayout = btn.dataset.layout;
+                        updateLayoutToggleUI();
+                        updateLayout();
+                    }
+                },
+                handleColorChange: function(event) {
+                    // FIX: (Bug 6) Apply color to ALL nodes, not just internal ones
+                    if (root) {
+                        const newColor = event.target.value;
+                        traverseAll(root, d => {
+                            d.data.color = newColor;
+                        });
+                        update(root); 
+                    }
+                },
+                handleResetColor: function() {
+                    // FIX: (Bug 6) Reset color for ALL nodes
+                    if (root) {
+                        traverseAll(root, d => {
+                            d.data.color = null;
+                        });
+                        update(root);
+                    }
+                },
+                toggleExportMenu: function() { exportMenu.classList.toggle('hidden'); },
+                handleExportMenuClose: function(e) { if (!exportBtn.contains(e.target) && !exportMenu.contains(e.target)) { exportMenu.classList.add('hidden'); } },
+                handleExportSvg: function(e) { e.preventDefault(); downloadFile(getSvgString(), "mindmap.svg", "image/svg+xml;charset=utf-8"); },
+                handleExportPng: function(e) {
+                    e.preventDefault();
+                    const svgString = getSvgString();
+                    const svgBlob = new Blob([svgString], {type: 'image/svg+xml;charset=utf-8'});
+                    const url = URL.createObjectURL(svgBlob);
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const bbox = svg.node().getBBox();
+                        canvas.width = bbox.width + 20;
+                        canvas.height = bbox.height + 20;
+                        const ctx = canvas.getContext('2d');
+                        
+                        // FIX: (Bug 4) Use computed style for accurate background color
+                        const bgColor = getComputedStyle(document.documentElement)
+                            .getPropertyValue('--bg-primary').trim();
+                        ctx.fillStyle = bgColor || '#f8fafc'; // Fallback
+                        
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(img, 10, 10);
+                        URL.revokeObjectURL(url);
+                        downloadFile(canvas.toDataURL('image/png'), 'mindmap.png', 'image/png');
+                    };
+                    img.src = url;
+                },
+                handleExportJson: function(e) { e.preventDefault(); downloadFile(JSON.stringify(mindMapData, null, 2), 'mindmap.json', 'application/json'); },
+                handleExportMm: function(e) {
+                     e.preventDefault();
+                     const toXml = (node) => {
+                        const escapedName = node.name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+                        let xml = `<node TEXT="${escapedName}"${node.color ? ` BACKGROUND_COLOR="${node.color}"` : ''}>`;
+                        if (node.children && node.children.length > 0) { xml += node.children.map(toXml).join(''); }
+                        xml += `</node>`;
+                        return xml;
+                     };
+                     const xmlContent = `<map version="1.0.1">${toXml(mindMapData)}</map>`;
+                     downloadFile(xmlContent, 'mindmap.mm', 'application/xml');
+                },
+                handleResize: function() {
+                    if(svg) {
+                        // When resizing, the container's own dimensions are the most reliable source.
+                        const width = container.clientWidth;
+                        const height = container.clientHeight;
+                        
+                        svg.attr("width", width)
+                           .attr("height", height)
+                           .attr("viewBox", [-width / 2, -height / 2, width, height]);
+                        
+                        // THIS IS THE KEY FIX:
+                        // Only call fitView if NOT in fullscreen AND 
+                        // NOT in the middle of a fullscreen transition.
+                        if (!document.fullscreenElement && root && !isFullscreenTransitioning) {
+                           fitView();
+                        }
+                    }
+                },
+                handleKeydown: function(e) {
+                    if (!root || document.activeElement === searchInput) return;
+                    if (e.key.toLowerCase() === 't') { e.preventDefault(); toggleTheme(); }
+                    if (e.key.toLowerCase() === 'f') { e.preventDefault(); eventHandlers.toggleFullscreen(); }
+                    if (e.key.toLowerCase() === 'e') { e.preventDefault(); eventHandlers.toggleExpandCollapse(); }
+                    if (e.key === '+' || e.key === '=') { e.preventDefault(); eventHandlers.handleZoomIn(); }
+                    if (e.key === '-') { e.preventDefault(); eventHandlers.handleZoomOut(); }
+                    if (e.key.toLowerCase() === 'a') { e.preventDefault(); eventHandlers.handleFitView(); }
+                    
+                    if (!selectedNode) {
+                        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                             selectedNode = root;
+                             updateSelectionUI();
+                             centerNode(selectedNode);
+                        }
+                        return;
+                    }
+
+                    e.preventDefault();
+                    let targetNode = null;
+                    const parent = selectedNode.parent;
+
+                    switch(e.key) {
+                        case 'Escape': selectedNode = null; updateSelectionUI(); break;
+                        case 'Enter': case ' ': handleNodeClick(e, selectedNode); break;
+                        case 'ArrowLeft': targetNode = parent || selectedNode; break;
+                        case 'ArrowRight':
+                            if (selectedNode._children) {
+                                selectedNode.children = selectedNode._children;
+                                selectedNode._children = null;
+                                update(selectedNode);
+                                updateExpandCollapseButtonState();
+                                targetNode = selectedNode.children && selectedNode.children[0] || selectedNode;
+                            } else {
+                                targetNode = selectedNode.children && selectedNode.children[0] || selectedNode;
+                            }
+                            break;
+                        case 'ArrowUp':
+                            if (parent && parent.children) {
+                                const siblings = parent.children;
+                                const index = siblings.indexOf(selectedNode);
+                                if (index > 0) targetNode = siblings[index - 1];
+                            }
+                            break;
+                        case 'ArrowDown':
+                            if (parent && parent.children) {
+                                const siblings = parent.children;
+                                const index = siblings.indexOf(selectedNode);
+                                if (index < siblings.length - 1) targetNode = siblings[index + 1];
+                            }
+                            break;
+                    }
+
+                    if (targetNode) {
+                        selectedNode = targetNode;
+                        centerNode(selectedNode);
+                        
+                        // FIX: (Bug 12) Set focus on new node for accessibility
+                        g.selectAll('g.node').each(function(d) {
+                            if (d.id === selectedNode.id) {
+                                this.focus();
+                            }
+                        });
+                    }
+                    updateSelectionUI();
+                }
+            };
+
+            function setupEventListeners() {
+                fileInput.addEventListener('change', eventHandlers.handleFileChange, false);
+                mainContent.addEventListener('dragover', eventHandlers.handleDragOver);
+                mainContent.addEventListener('dragleave', eventHandlers.handleDragLeave);
+                mainContent.addEventListener('drop', eventHandlers.handleDrop);
+                themeToggle.addEventListener('click', toggleTheme);
+                fullscreenBtn.addEventListener('click', eventHandlers.toggleFullscreen);
+                expandCollapseBtn.addEventListener('click', eventHandlers.toggleExpandCollapse);
+                layoutToggleContainer.addEventListener('click', eventHandlers.handleLayoutToggle);
+                colorPicker.addEventListener('input', eventHandlers.handleColorChange);
+                resetColorBtn.addEventListener('click', eventHandlers.handleResetColor);
+                exportBtn.addEventListener('click', eventHandlers.toggleExportMenu);
+                document.addEventListener('click', eventHandlers.handleExportMenuClose);
+                document.getElementById('export-svg').addEventListener('click', eventHandlers.handleExportSvg);
+                document.getElementById('export-png').addEventListener('click', eventHandlers.handleExportPng);
+                document.getElementById('export-json').addEventListener('click', eventHandlers.handleExportJson);
+                document.getElementById('export-mm').addEventListener('click', eventHandlers.handleExportMm);
+                searchInput.addEventListener('input', eventHandlers.handleSearchDebounced); // FIX: (Bug 5) Use debounced handler
+                zoomInBtn.addEventListener('click', eventHandlers.handleZoomIn);
+                zoomOutBtn.addEventListener('click', eventHandlers.handleZoomOut);
+                zoomSlider.addEventListener('input', eventHandlers.handleZoomSlider);
+                fitViewBtn.addEventListener('click', eventHandlers.handleFitView);
+                window.addEventListener('resize', eventHandlers.handleResize);
+                window.addEventListener('keydown', eventHandlers.handleKeydown);
+                messageToastClose.addEventListener('click', hideMessage); // FIX: (Bug 11) Add listener for toast close
+
+                // FIX: (Bug 1) Use named handler for fullscreen change
+                document.addEventListener("fullscreenchange", eventHandlers.handleFullscreenChange);
+            }
+
+            function cleanupEventListeners() {
+                fileInput.removeEventListener('change', eventHandlers.handleFileChange, false);
+                mainContent.removeEventListener('dragover', eventHandlers.handleDragOver);
+                mainContent.removeEventListener('dragleave', eventHandlers.handleDragLeave);
+                mainContent.removeEventListener('drop', eventHandlers.handleDrop);
+                themeToggle.removeEventListener('click', toggleTheme);
+                fullscreenBtn.removeEventListener('click', eventHandlers.toggleFullscreen);
+                expandCollapseBtn.removeEventListener('click', eventHandlers.toggleExpandCollapse);
+                layoutToggleContainer.removeEventListener('click', eventHandlers.handleLayoutToggle);
+                colorPicker.removeEventListener('input', eventHandlers.handleColorChange);
+                resetColorBtn.removeEventListener('click', eventHandlers.handleResetColor);
+                exportBtn.removeEventListener('click', eventHandlers.toggleExportMenu);
+                document.removeEventListener('click', eventHandlers.handleExportMenuClose);
+                document.getElementById('export-svg').removeEventListener('click', eventHandlers.handleExportSvg);
+                document.getElementById('export-png').removeEventListener('click', eventHandlers.handleExportPng);
+                document.getElementById('export-json').removeEventListener('click', eventHandlers.handleExportJson);
+                document.getElementById('export-mm').removeEventListener('click', eventHandlers.handleExportMm);
+                searchInput.removeEventListener('input', eventHandlers.handleSearchDebounced); // FIX: (Bug 5) Remove debounced handler
+                zoomInBtn.removeEventListener('click', eventHandlers.handleZoomIn);
+                zoomOutBtn.removeEventListener('click', eventHandlers.handleZoomOut);
+                zoomSlider.removeEventListener('input', eventHandlers.handleZoomSlider);
+                fitViewBtn.removeEventListener('click', eventHandlers.handleFitView);
+                window.removeEventListener('resize', eventHandlers.handleResize);
+                window.removeEventListener('keydown', eventHandlers.handleKeydown);
+                messageToastClose.removeEventListener('click', hideMessage); // FIX: (Bug 11) Remove listener
+
+                // FIX: (Bug 1) Remove named handler
+                document.removeEventListener("fullscreenchange", eventHandlers.handleFullscreenChange);
+            }
+            // FIX: (Bug 10) Removed window.cleanupMindMapApp global variable
+
+            initializeApp();
+        });
+    </script>
+</body>
+</html>
+
+
