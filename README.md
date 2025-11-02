@@ -2,6 +2,8 @@
 
 A lightweight, interactive, and beautifully-styled browser-based viewer for FreeMind (.mm) mind map files. This tool parses .mm files and renders them as dynamic, collapsible trees using D3.js, with a modern UI built in Tailwind CSS.
 
+Live Demo: Try the tool online at: https://balajik.work.gd/mindmap-viewer/
+
 ## ✨ Features
 
 This isn't just a simple viewer; it's packed with features for a great user experience:
